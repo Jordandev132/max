@@ -1,4 +1,7 @@
-"""Max — Configuration."""
+"""Max — Configuration.
+
+X-ONLY content agent. Jordan's rule: no TikTok, IG, LinkedIn, YouTube Shorts.
+"""
 from __future__ import annotations
 
 import os
@@ -11,70 +14,80 @@ ET = timezone(timedelta(hours=-5))
 MAX_ROOT = Path(__file__).resolve().parent
 DATA_DIR = MAX_ROOT / "data"
 
-# ── Shared LLM ──
+# ── Shared imports ──
 sys.path.insert(0, str(Path.home() / "shared"))
 sys.path.insert(0, str(Path.home()))
 
 # ── Identity ──
 AGENT_NAME = "Max"
-ROLE = "AI Content Agent"
-BRAND_HANDLE = "@abdalla.dev"  # Jordan can update
+ROLE = "AI Content Agent — X Only"
 
-# ── Platforms ──
-PLATFORMS = ["tiktok", "instagram", "x", "linkedin", "youtube_shorts"]
+# ── Platform — X ONLY (Jordan's rule) ──
+PLATFORMS = ["x"]
 
-# ── Content Pillars ──
+# ── Content Pillars (from spec — 4 pillars with weights) ──
 PILLARS = {
-    "ai_tech": {
-        "name": "AI / Tech",
-        "angle": "AI can do this — automation demos, chatbot showcases, AI for business",
-        "platforms": ["tiktok", "instagram", "x", "linkedin", "youtube_shorts"],
+    "ai_automation": {
+        "name": "AI Automation",
+        "weight": 0.40,
+        "angle": "AI tools, workflows, automation demos, 'I built this' showcases",
+    },
+    "ai_news": {
+        "name": "AI News & Trends",
+        "weight": 0.25,
+        "angle": "Breaking AI news, industry shifts, rapid commentary",
     },
     "build_in_public": {
         "name": "Build-in-Public",
-        "angle": "Day X of building a 12-agent AI system — dev credibility, potential leads",
-        "platforms": ["x", "linkedin"],
+        "weight": 0.25,
+        "angle": "Day X updates on the 12-agent AI system, dev credibility, lessons learned",
     },
-    "demo_sales": {
-        "name": "Demo-as-Sales-Tool",
-        "angle": "Watch me build a chatbot for [business] — cold DM collateral",
-        "platforms": ["tiktok", "instagram", "linkedin", "youtube_shorts"],
+    "hot_takes": {
+        "name": "Opinions & Hot Takes",
+        "weight": 0.10,
+        "angle": "Contrarian views, bold claims, strong opinions backed by experience",
     },
 }
 
-# ── Weekly Targets (from plan) ──
-WEEKLY_TARGETS = {
-    "tiktok": 3,       # 2-3 AI/tech reels
-    "instagram": 2,    # 1-2 reels
-    "x": 5,            # 3-5 posts (incl. build-in-public)
-    "linkedin": 4,     # 3-5 posts (CRITICAL for agency leads)
-    "youtube_shorts": 2,  # 1-2 repurposed
-}
+# ── Posting Schedule ──
+POSTS_PER_DAY = 4                      # 4-5 posts/day (start conservative)
+MIN_POST_SPACING_S = 7200              # 2h minimum between posts
+TIMING_JITTER_M = 15                   # +/- 15 min randomization
+OPTIMAL_HOURS_ET = [8, 10, 13, 16, 19] # EST slots from spec (8:30,10:30,1,4,7:30)
+OPTIMAL_MINUTES = [0, 30]              # half-hour offsets
 
-# ── Content Rules ──
-CONTENT_RULES = [
-    "First 3 seconds MUST hook — bold text overlay or punchy opening line",
-    "7-30 second reels for TikTok/IG/YouTube Shorts",
-    "3-5 NICHE hashtags only — NEVER #foryou #viral #fyp",
-    "Each platform gets UNIQUE content — no cross-posting with watermarks",
-    "Optimal posting: 6-8 AM ET or 9-11 PM ET",
-    "LinkedIn posts: professional but conversational, concrete numbers",
-    "X posts: punchy, thread-friendly, build-in-public angle",
-    "Demo videos: show the build process, end with CTA",
-    "Always include a CTA — DM me, link in bio, follow for more",
-]
+# Weekend schedule
+WEEKEND_POSTS_SAT = 2                  # lighter Saturday
+WEEKEND_POSTS_SUN = 0                  # skip Sunday
+
+# ── Thread Settings ──
+THREADS_PER_WEEK = 2
+MAX_THREAD_TWEETS = 12
+THREAD_DELAY_S = 2                     # seconds between thread tweets
+
+# ── Auto-Reply Limits (safety) ──
+MAX_REPLIES_PER_10MIN = 5
+REPLY_DELAY_MIN_S = 180                # 3 min minimum before replying
+REPLY_DELAY_MAX_S = 900                # 15 min maximum
+REPLY_CHECK_INTERVAL_S = 900           # 15 min poll interval
+
+# ── DRY_RUN — default TRUE until Jordan creates X account ──
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+
+# ── X API Tier ──
+X_API_TIER = os.getenv("X_API_TIER", "free")  # "free" or "basic"
 
 # ── Cycle Intervals ──
-CONTENT_CYCLE_S = 4 * 3600   # Generate content every 4 hours
-HEARTBEAT_S = 300             # Heartbeat every 5 min
-ATLAS_CHECK_S = 1800          # Check Atlas feeds every 30 min
+CONTENT_CYCLE_S = 4 * 3600             # Generate content every 4 hours
+POSTING_CHECK_S = 300                  # Check posting queue every 5 min
+HEARTBEAT_S = 300                      # Heartbeat every 5 min
+ATLAS_CHECK_S = 1800                   # Check Atlas feeds every 30 min
 
 # ── File Paths ──
 QUEUE_FILE = DATA_DIR / "content_queue.json"
 STATUS_FILE = DATA_DIR / "max_status.json"
-IDEAS_FILE = DATA_DIR / "ideas.json"
-CALENDAR_FILE = DATA_DIR / "content_calendar.json"
-METRICS_FILE = DATA_DIR / "metrics.json"
+DRY_RUN_LOG = DATA_DIR / "dry_run_log.json"
+HISTORY_FILE = DATA_DIR / "post_history.json"
 
 # ── Atlas Integration ──
 ATLAS_KB_DIR = Path.home() / "atlas" / "data" / "knowledge_base"
@@ -83,4 +96,5 @@ ATLAS_TRENDS_FILE = Path.home() / "atlas" / "data" / "background_status.json"
 # ── Claude Overseer ──
 OVERSEER_DATA = Path.home() / "claude_overseer" / "data"
 
+# ── Ensure data directory ──
 DATA_DIR.mkdir(parents=True, exist_ok=True)

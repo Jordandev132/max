@@ -1,10 +1,11 @@
 """Max — Content Daemon.
 
-Background loop:
-- Every 4h: generate a batch of content (5 items)
-- Every 30m: check Atlas feeds for trending topics
+X-ONLY background loop:
+- Every 4h: content generation cycle (generate → humanize → queue)
+- Every 5m: check posting queue for due items (post or dry-run log)
+- Every 30m: check Atlas feeds for breaking AI news
+- Every 15m: reply monitoring (DORMANT until API Basic)
 - Every 5m: heartbeat for Robotox
-- Checks Claude Overseer directives for content requests
 
 Run: python -m max           (daemon loop)
      python -m max --once    (single cycle)
@@ -21,8 +22,13 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config
-from .generator import generate_batch, generate_linkedin_post, generate_x_post
-from .scheduler import add_batch, get_stats, prune_old
+from .generator import (
+    generate_batch, generate_tweet, generate_thread,
+    generate_news_commentary, humanize,
+)
+from .scheduler import add_batch, get_stats, get_due, mark_posted, prune_old
+from .poster import XPoster
+from .replier import AutoReplier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,19 +68,23 @@ def _heartbeat():
     _publish_event("heartbeat", {
         "agent": "max",
         "status": "alive",
+        "dry_run": config.DRY_RUN,
         "timestamp": datetime.now(config.ET).isoformat(),
     }, summary="Max daemon alive")
 
 
-def _write_status(last_action: str, items_generated: int = 0):
-    """Write status file for Robotox and dashboard."""
+def _write_status(last_action: str, items_generated: int = 0,
+                  posts_today: int = 0):
+    """Write status file for Robotox, dashboard, and Shelby."""
     stats = get_stats()
     status = {
         "agent": "max",
         "status": "running",
+        "mode": "DRY_RUN" if config.DRY_RUN else "LIVE",
         "last_action": last_action,
         "last_update": datetime.now(config.ET).isoformat(),
         "items_generated_total": items_generated,
+        "posts_today": posts_today,
         "queue": stats,
     }
     config.STATUS_FILE.write_text(json.dumps(status, indent=2))
@@ -89,7 +99,6 @@ def _check_overseer_directives() -> list[dict]:
 
     try:
         data = json.loads(directive_file.read_text())
-        # Check for content_directives aimed at max
         for d in data.get("content_directives", []):
             if d.get("agent") == "max" and d.get("status") != "done":
                 directives.append(d)
@@ -110,7 +119,7 @@ def _check_atlas_trends() -> list[str]:
         for f in findings:
             if isinstance(f, str) and any(kw in f.lower() for kw in [
                 "ai", "chatbot", "automation", "llm", "gpt", "claude",
-                "agent", "startup", "saas", "bot",
+                "agent", "startup", "saas", "bot", "openai", "anthropic",
             ]):
                 topics.append(f)
     except Exception:
@@ -118,8 +127,30 @@ def _check_atlas_trends() -> list[str]:
     return topics[:3]
 
 
-def content_cycle(count: int = 5) -> dict:
-    """Run one content generation cycle."""
+def _is_weekend() -> bool:
+    """Check if today is a weekend day."""
+    return datetime.now(config.ET).weekday() >= 5  # Sat=5, Sun=6
+
+
+def _posts_allowed_today() -> int:
+    """How many posts are allowed today (lighter on weekends)."""
+    day = datetime.now(config.ET).weekday()
+    if day == 6:  # Sunday
+        return config.WEEKEND_POSTS_SUN
+    if day == 5:  # Saturday
+        return config.WEEKEND_POSTS_SAT
+    return config.POSTS_PER_DAY
+
+
+def content_cycle(count: int = 4) -> dict:
+    """Run one content generation cycle.
+
+    1. Check Overseer directives
+    2. Check Atlas trends → news commentary
+    3. Generate batch (weighted by pillar)
+    4. Humanize each item
+    5. Add to queue with scheduled times
+    """
     now = datetime.now(config.ET)
     log.info("=== Max Content Cycle %s ===", now.isoformat())
 
@@ -131,35 +162,48 @@ def content_cycle(count: int = 5) -> dict:
         log.info("Found %d directives from Claude", len(directives))
         for d in directives[:3]:
             topic = d.get("topic", d.get("message", ""))
-            platform = d.get("platform", "linkedin")
-            if platform == "linkedin":
-                item = generate_linkedin_post(topic=topic)
-            elif platform == "x":
-                item = generate_x_post(topic=topic)
+            pillar = d.get("pillar", "ai_automation")
+            if d.get("type") == "thread":
+                item = generate_thread(pillar=pillar, topic=topic)
             else:
-                item = generate_linkedin_post(topic=topic)
+                item = generate_tweet(pillar=pillar, topic=topic)
+            # Humanize single tweets
+            if item["type"] == "tweet":
+                item["content"] = humanize(item["content"])
+            elif item["type"] == "thread":
+                item["content"] = [humanize(t) for t in item["content"]]
             add_batch([item])
             total_generated += 1
 
-    # 2. Check Atlas trends for timely content
+    # 2. Check Atlas trends for timely news commentary
     trends = _check_atlas_trends()
     if trends:
         log.info("Found %d AI trends from Atlas", len(trends))
         for trend in trends[:2]:
-            item = generate_x_post(pillar="ai_tech", topic=trend)
+            item = generate_news_commentary(trend)
+            item["content"] = humanize(item["content"])
             add_batch([item])
             total_generated += 1
 
-    # 3. Generate regular batch
+    # 3. Generate regular batch (minus what we already generated)
     remaining = max(1, count - total_generated)
     batch = generate_batch(count=remaining)
+
+    # 4. Humanize each item
+    for item in batch:
+        if item["type"] == "tweet":
+            item["content"] = humanize(item["content"])
+        elif item["type"] == "thread":
+            item["content"] = [humanize(t) for t in item["content"]]
+
+    # 5. Add to queue
     add_batch(batch)
     total_generated += len(batch)
 
-    # 4. Prune old items
+    # Prune old items
     pruned = prune_old(days=30)
 
-    # 5. Write status
+    # Write status
     _write_status(f"Generated {total_generated} items", total_generated)
 
     stats = get_stats()
@@ -180,46 +224,111 @@ def content_cycle(count: int = 5) -> dict:
     return result
 
 
+def _post_cycle(poster: XPoster) -> int:
+    """Check queue for due items and post (or dry-run log)."""
+    due_items = get_due()
+    if not due_items:
+        return 0
+
+    posted = 0
+    max_today = _posts_allowed_today()
+    stats = get_stats()
+    already_posted = stats.get("posted_today", 0)
+
+    for item in due_items:
+        if already_posted + posted >= max_today:
+            log.info("Daily post limit reached (%d/%d)", already_posted + posted, max_today)
+            break
+
+        if item["type"] == "thread":
+            tweets = item.get("content", [])
+            if isinstance(tweets, list):
+                result = poster.post_thread(tweets, hashtags=item.get("hashtags"))
+            else:
+                continue
+        else:
+            text = item.get("content", "")
+            result = poster.post_tweet(text, hashtags=item.get("hashtags"))
+
+        if result.get("ok"):
+            mark_posted(item["id"], result)
+            posted += 1
+
+    if posted:
+        log.info("Posted %d items (%s mode)", posted, "DRY_RUN" if poster.dry_run else "LIVE")
+        _write_status(f"Posted {posted} items", posts_today=already_posted + posted)
+
+    return posted
+
+
 def main():
     """Main daemon loop."""
-    log.info("Max Content Agent starting — content_cycle=%ds, atlas_check=%ds",
-             config.CONTENT_CYCLE_S, config.ATLAS_CHECK_S)
+    log.info("Max Content Agent starting — mode=%s, cycle=%ds, post_check=%ds",
+             "DRY_RUN" if config.DRY_RUN else "LIVE",
+             config.CONTENT_CYCLE_S, config.POSTING_CHECK_S)
+
+    poster = XPoster()
+    replier = AutoReplier()
 
     _write_status("starting")
 
     last_content = 0
+    last_post_check = 0
     last_atlas = 0
     last_heartbeat = 0
+    last_reply_check = 0
     total_generated = 0
+    total_posted = 0
 
     while _running:
         now = time.time()
 
-        # Heartbeat
+        # Heartbeat (every 5 min)
         if now - last_heartbeat >= config.HEARTBEAT_S:
             _heartbeat()
             last_heartbeat = now
 
-        # Content generation cycle
+        # Content generation cycle (every 4h)
         if now - last_content >= config.CONTENT_CYCLE_S:
             try:
                 result = content_cycle()
                 total_generated += result.get("generated", 0)
-                _write_status(f"Generated {result.get('generated', 0)} items",
-                              total_generated)
+                _write_status(
+                    f"Generated {result.get('generated', 0)} items",
+                    total_generated, total_posted,
+                )
             except Exception as e:
                 log.error("Content cycle failed: %s", e, exc_info=True)
                 _write_status(f"Error: {e}")
             last_content = now
 
-        # Atlas trend check (more frequent than full cycle)
+        # Post cycle (every 5 min) — check queue for due items
+        if now - last_post_check >= config.POSTING_CHECK_S:
+            try:
+                posted = _post_cycle(poster)
+                total_posted += posted
+            except Exception as e:
+                log.error("Post cycle failed: %s", e, exc_info=True)
+            last_post_check = now
+
+        # Atlas trend check (every 30 min)
         if now - last_atlas >= config.ATLAS_CHECK_S:
             trends = _check_atlas_trends()
             if trends:
                 log.info("Atlas trends: %s", trends[:2])
             last_atlas = now
 
+        # Reply monitoring (every 15 min — DORMANT until API Basic)
+        if now - last_reply_check >= config.REPLY_CHECK_INTERVAL_S:
+            try:
+                result = replier.process_mentions(poster=poster)
+                if result.get("status") == "dormant":
+                    log.debug("Auto-reply dormant — needs API Basic tier")
+            except Exception as e:
+                log.error("Reply check failed: %s", e)
+            last_reply_check = now
+
         time.sleep(30)
 
-    log.info("Max daemon stopped. Total generated: %d", total_generated)
-    _write_status("stopped", total_generated)
+    log.info("Max daemon stopped. Generated: %d, Posted: %d", total_generated, total_posted)
+    _write_status("stopped", total_generated, total_posted)

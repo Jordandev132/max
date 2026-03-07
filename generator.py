@@ -1,6 +1,7 @@
 """Max — Content Generator.
 
-Uses shared LLM (local Qwen 35B) to generate platform-specific content.
+X-ONLY: generate_tweet(), generate_thread(), generate_news_commentary(),
+generate_engagement_tweet(), humanize(). Uses shared LLM (local Qwen 35B).
 Falls back to template-based generation if LLM unavailable.
 """
 from __future__ import annotations
@@ -13,10 +14,9 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config
-from .identity import SYSTEM_PROMPT, CHARACTER
+from .identity import SYSTEM_PROMPT, HUMANIZE_PROMPT, BANNED_WORDS, VERBAL_TICS
 from .content_bank import (
-    HOOKS, HASHTAGS, LINKEDIN_TEMPLATES, X_THREAD_TEMPLATES,
-    DEMO_CONCEPTS, CONTENT_IDEAS,
+    TWEET_TEMPLATES, THREAD_HOOKS, HASHTAGS, CONTENT_IDEAS,
 )
 
 log = logging.getLogger("max.generator")
@@ -30,13 +30,13 @@ except Exception:
     log.warning("Shared LLM not available — using template mode")
 
 
-def _call_llm(prompt: str, max_tokens: int = 800) -> str | None:
+def _call_llm(prompt: str, max_tokens: int = 400, system: str | None = None) -> str | None:
     """Call shared LLM with Max's system prompt."""
     if not _llm_call:
         return None
     try:
         return _llm_call(
-            system=SYSTEM_PROMPT,
+            system=system or SYSTEM_PROMPT,
             user=prompt,
             agent="max",
             task_type="writing",
@@ -47,9 +47,9 @@ def _call_llm(prompt: str, max_tokens: int = 800) -> str | None:
         return None
 
 
-def _pick_hashtags(platform: str, pillar: str, count: int = 4) -> list[str]:
-    """Pick random niche hashtags for platform+pillar."""
-    pool = HASHTAGS.get(platform, {}).get(pillar, [])
+def _pick_hashtags(pillar: str, count: int = 2) -> list[str]:
+    """Pick random niche hashtags for X. Max 2 per tweet (spec rule)."""
+    pool = HASHTAGS.get(pillar, HASHTAGS.get("ai_automation", []))
     if not pool:
         return []
     return random.sample(pool, min(count, len(pool)))
@@ -59,7 +59,6 @@ def _get_atlas_context() -> str:
     """Pull latest AI/tech trends from Atlas knowledge base."""
     context_parts = []
 
-    # Check Atlas background status for recent findings
     if config.ATLAS_TRENDS_FILE.exists():
         try:
             data = json.loads(config.ATLAS_TRENDS_FILE.read_text())
@@ -71,14 +70,15 @@ def _get_atlas_context() -> str:
         except Exception:
             pass
 
-    # Check Atlas KB for AI-related entries
     if config.ATLAS_KB_DIR.exists():
         try:
             for f in sorted(config.ATLAS_KB_DIR.glob("*.json"))[-3:]:
                 data = json.loads(f.read_text())
                 if isinstance(data, dict):
                     summary = data.get("summary", "")
-                    if summary and any(kw in summary.lower() for kw in ["ai", "automation", "chatbot", "llm", "agent"]):
+                    if summary and any(kw in summary.lower() for kw in [
+                        "ai", "automation", "chatbot", "llm", "agent", "gpt", "claude",
+                    ]):
                         context_parts.append(f"Atlas KB: {summary[:200]}")
         except Exception:
             pass
@@ -86,111 +86,94 @@ def _get_atlas_context() -> str:
     return "\n".join(context_parts) if context_parts else ""
 
 
+def _pick_pillar() -> str:
+    """Pick a content pillar weighted by spec distribution."""
+    pillars = list(config.PILLARS.keys())
+    weights = [config.PILLARS[p]["weight"] for p in pillars]
+    return random.choices(pillars, weights=weights, k=1)[0]
+
+
+def _check_banned_words(text: str) -> str:
+    """Remove banned AI-detection words from text."""
+    result = text
+    for word in BANNED_WORDS:
+        if word.lower() in result.lower():
+            result = result.replace(word, "")
+            result = result.replace(word.title(), "")
+            result = result.replace(word.upper(), "")
+    # Clean up double spaces
+    while "  " in result:
+        result = result.replace("  ", " ")
+    return result.strip()
+
+
+def _load_recent_posts(days: int = 30) -> list[str]:
+    """Load recent post content for dedup checking."""
+    posts = []
+    if config.HISTORY_FILE.exists():
+        try:
+            data = json.loads(config.HISTORY_FILE.read_text())
+            for item in data[-100:]:
+                posts.append(item.get("content", ""))
+        except Exception:
+            pass
+    return posts
+
+
 # ═══════════════════════════════════════════
 #  Content Generation
 # ═══════════════════════════════════════════
 
-def generate_linkedin_post(pillar: str = "ai_tech", topic: str | None = None) -> dict:
-    """Generate a LinkedIn post optimized for agency leads."""
-    template = random.choice(LINKEDIN_TEMPLATES)
+def generate_tweet(
+    pillar: str | None = None,
+    template_id: str | None = None,
+    topic: str | None = None,
+) -> dict:
+    """Generate a single tweet using one of the 12 templates."""
+    if not pillar:
+        pillar = _pick_pillar()
+
+    # Pick template
+    if template_id and template_id in TWEET_TEMPLATES:
+        template = TWEET_TEMPLATES[template_id]
+    else:
+        # Pick a template matching the pillar, or any template
+        matching = [
+            (tid, t) for tid, t in TWEET_TEMPLATES.items()
+            if t["pillar"] == pillar
+        ]
+        if not matching:
+            matching = list(TWEET_TEMPLATES.items())
+        template_id, template = random.choice(matching)
+
+    # Pick topic
     if not topic:
-        ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["ai_tech"])
+        ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["ai_automation"])
         topic = random.choice(ideas)
 
     atlas_ctx = _get_atlas_context()
-    prompt = f"""Write a LinkedIn post about: {topic}
+    prompt = template["prompt"].format(topic=topic)
+    if atlas_ctx:
+        prompt += f"\n\nTrending context from research:\n{atlas_ctx}"
 
-Format: {template['format']}
-Structure: {template['structure']}
-Example hook style: {template['example_hook']}
-
-{f'Trending context from research: {atlas_ctx}' if atlas_ctx else ''}
-
-Rules:
-- Professional but conversational — NOT corporate jargon
-- Include concrete numbers (hours saved, cost, percentage)
-- End with a clear CTA (DM me, check link in bio, etc.)
-- 150-300 words
-- No emojis in first line
-- Make it feel like a real person sharing real results
-
-Return ONLY the post text, no metadata."""
-
-    content = _call_llm(prompt, max_tokens=600)
+    content = _call_llm(prompt, max_tokens=300)
     if not content:
         # Template fallback
-        content = f"""{template['example_hook']}
+        content = template["example"]
 
-Here's what I learned building AI solutions for small businesses:
+    content = _check_banned_words(content)
+    # Trim to 280 chars
+    if len(content) > 280:
+        content = content[:277] + "..."
 
-Most owners spend 15+ hours/week on tasks that a chatbot could handle in seconds.
-
-I've been building these for clients — appointment booking, lead qualification, customer FAQ bots.
-
-The results? An average of 12 hours/week saved and 3x faster response times.
-
-If you run a small business and want to see what AI could automate for you — DM me "bot" and I'll show you."""
-
-    hashtags = _pick_hashtags("linkedin", pillar, 3)
-
-    return {
-        "id": uuid.uuid4().hex[:12],
-        "platform": "linkedin",
-        "pillar": pillar,
-        "type": "post",
-        "topic": topic,
-        "content": content,
-        "hashtags": hashtags,
-        "template_used": template["format"],
-        "generated_at": datetime.now(config.ET).isoformat(),
-        "status": "draft",
-    }
-
-
-def generate_x_post(pillar: str = "build_in_public", topic: str | None = None) -> dict:
-    """Generate an X (Twitter) post or thread starter."""
-    if not topic:
-        ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["build_in_public"])
-        topic = random.choice(ideas)
-
-    atlas_ctx = _get_atlas_context()
-    prompt = f"""Write a tweet about: {topic}
-
-Pillar: {pillar}
-{f'Context: {atlas_ctx}' if atlas_ctx else ''}
-
-Rules:
-- Max 280 characters for single tweet
-- Punchy, direct, no fluff
-- If build-in-public: include a specific metric or event
-- If AI/tech: include a concrete example
-- End with engagement hook (question or bold claim)
-- No hashtags in the tweet body (added separately)
-
-Return ONLY the tweet text."""
-
-    content = _call_llm(prompt, max_tokens=200)
-    if not content:
-        hooks = HOOKS.get(pillar, HOOKS["ai_tech"])
-        hook = random.choice(hooks)
-        content = hook.format(
-            action="qualifies leads", hours="15", task="customer support",
-            time="3 hours", old_time="3 days", number="40",
-            Business_type="Dental", result="3x more bookings",
-            day=random.randint(1, 60), count=12, finding="a pricing bug",
-            week=random.randint(1, 12), metric="lead response time",
-            value="< 30 seconds", issue="a stale API key", month=1,
-            system="content pipeline", bot_type="booking bot",
-            business="dentist", price="500", savings="2,000",
-        )
-
-    hashtags = _pick_hashtags("x", pillar, 3)
+    hashtags = _pick_hashtags(pillar, 2)
 
     return {
         "id": uuid.uuid4().hex[:12],
         "platform": "x",
         "pillar": pillar,
         "type": "tweet",
+        "template": template_id,
         "topic": topic,
         "content": content,
         "hashtags": hashtags,
@@ -199,109 +182,227 @@ Return ONLY the tweet text."""
     }
 
 
-def generate_short_video_script(
-    platform: str = "tiktok",
-    pillar: str = "demo_sales",
+def generate_thread(
+    pillar: str | None = None,
     topic: str | None = None,
+    tweet_count: int = 6,
 ) -> dict:
-    """Generate a script for TikTok/IG Reel/YouTube Short (7-30 seconds)."""
+    """Generate a thread using spec's hook->context->stakes->value->takeaway->CTA."""
+    if not pillar:
+        pillar = _pick_pillar()
     if not topic:
-        if pillar == "demo_sales":
-            topic = random.choice(DEMO_CONCEPTS)
-        else:
-            ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["ai_tech"])
-            topic = random.choice(ideas)
+        ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["ai_automation"])
+        topic = random.choice(ideas)
 
-    hooks = HOOKS.get(pillar, HOOKS["ai_tech"])
-    hook = random.choice(hooks)
+    tweet_count = min(tweet_count, config.MAX_THREAD_TWEETS)
 
-    prompt = f"""Write a short video script (15-25 seconds) about: {topic}
+    atlas_ctx = _get_atlas_context()
+    prompt = f"""Write a Twitter/X thread ({tweet_count} tweets) about: {topic}
 
-Platform: {platform}
 Pillar: {pillar}
-Hook style: {hook}
+{f'Context: {atlas_ctx}' if atlas_ctx else ''}
 
-Structure:
-- HOOK (0-3s): Bold text overlay + punchy voiceover
-- BODY (3-20s): Show the demo/point with clear visuals
-- CTA (20-25s): Clear next step
+Thread structure:
+1. HOOK — bold claim or curiosity gap (under 250 chars)
+2. CONTEXT — why this matters NOW (under 250 chars)
+3. STAKES — what you lose by not knowing this (under 250 chars)
+4-{tweet_count - 2}. VALUE — actual insights, frameworks, tools (each under 250 chars)
+{tweet_count - 1}. TAKEAWAY — one-liner people screenshot (under 250 chars)
+{tweet_count}. CTA — invite follow/engagement, not desperate (under 250 chars)
 
 Rules:
-- First 3 seconds MUST stop the scroll
-- Show, don't tell — describe what's on screen
-- Conversational, not scripted-sounding
-- Include [TEXT OVERLAY] and [VOICEOVER] markers
-- End with a specific CTA
+- Each tweet MUST be under 250 characters
+- Number each tweet (1/, 2/, etc.)
+- Use verbal tics naturally
+- Include specific numbers and examples
+- No hashtags in thread body
+- Write in Max's voice: sharp, opinionated, practical
 
-Format:
-[0-3s] HOOK
-[TEXT OVERLAY]: ...
-[VOICEOVER]: ...
+Return ONLY the numbered tweets, one per line."""
 
-[3-20s] BODY
-[SCREEN]: ...
-[VOICEOVER]: ...
+    content = _call_llm(prompt, max_tokens=800)
 
-[20-25s] CTA
-[TEXT OVERLAY]: ...
-[VOICEOVER]: ..."""
+    if content:
+        # Parse numbered tweets
+        tweets = []
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Remove numbering prefix (1/, 1., 1), etc.)
+            import re
+            cleaned = re.sub(r"^\d+[/.)\]]\s*", "", line)
+            if cleaned:
+                cleaned = _check_banned_words(cleaned)
+                if len(cleaned) > 250:
+                    cleaned = cleaned[:247] + "..."
+                tweets.append(cleaned)
+    else:
+        # Template fallback
+        hook = random.choice(THREAD_HOOKS)
+        tweets = [
+            hook.format(
+                action="automated my entire content pipeline",
+                timeframe="2 weeks", contrarian_take="AI won't replace you",
+                cost="$50", time="40 hours", thing="12 AI agents",
+                event="one of my agents crashed", topic=topic,
+                common_belief="you need a team to scale",
+                number="5", experience="building AI agents solo",
+            ),
+            f"Here's why this matters right now: {topic}",
+            "Most people are sleeping on this. And it's costing them.",
+            "The approach that actually works: keep it simple, ship fast, iterate.",
+            f"Bottom line: {topic} is closer than you think.",
+            "Follow me for more of this. I'm building this stuff daily.",
+        ]
 
-    content = _call_llm(prompt, max_tokens=500)
-    if not content:
-        content = f"""[0-3s] HOOK
-[TEXT OVERLAY]: {hook}
-[VOICEOVER]: {hook}
-
-[3-15s] BODY
-[SCREEN]: Screen recording of chatbot in action
-[VOICEOVER]: I built this in under 3 hours. It handles bookings, FAQs, and follow-ups automatically.
-
-[15-20s] CTA
-[TEXT OVERLAY]: DM "bot" if you want one
-[VOICEOVER]: I build these for small businesses. DM me if you want one."""
-
-    hashtags = _pick_hashtags(platform, pillar, 4)
+    hashtags = _pick_hashtags(pillar, 2)
 
     return {
         "id": uuid.uuid4().hex[:12],
-        "platform": platform,
+        "platform": "x",
         "pillar": pillar,
-        "type": "video_script",
+        "type": "thread",
         "topic": topic,
-        "content": content,
+        "content": tweets,
         "hashtags": hashtags,
+        "tweet_count": len(tweets),
         "generated_at": datetime.now(config.ET).isoformat(),
         "status": "draft",
-        "duration_target": "15-25s",
     }
 
 
-def generate_batch(count: int = 5) -> list[dict]:
-    """Generate a mixed batch of content across platforms and pillars.
+def generate_news_commentary(news_item: str) -> dict:
+    """Generate rapid response to AI news from Atlas."""
+    prompt = f"""Write rapid commentary on this AI news: {news_item}
 
-    Default mix weighted toward LinkedIn (agency leads) and X (build-in-public).
+Rules:
+- Reference the news briefly (don't just repeat it)
+- Give your HOT TAKE — what this actually means
+- Explain what it means for builders/practitioners
+- Use Max's voice: opinionated, practical, no hype
+- Under 280 characters
+- Start with a verbal tic if it fits naturally
+
+Return ONLY the tweet text."""
+
+    content = _call_llm(prompt, max_tokens=200)
+    if not content:
+        tic = random.choice(VERBAL_TICS)
+        content = f"{tic} {news_item[:150]}. Most people are missing the real point here."
+
+    content = _check_banned_words(content)
+    if len(content) > 280:
+        content = content[:277] + "..."
+
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "platform": "x",
+        "pillar": "ai_news",
+        "type": "tweet",
+        "template": "news_commentary",
+        "topic": news_item,
+        "content": content,
+        "hashtags": _pick_hashtags("ai_news", 2),
+        "generated_at": datetime.now(config.ET).isoformat(),
+        "status": "draft",
+    }
+
+
+def generate_engagement_tweet(topic: str | None = None) -> dict:
+    """Generate a question/poll tweet for engagement."""
+    return generate_tweet(
+        pillar="build_in_public",
+        template_id="question_poll",
+        topic=topic,
+    )
+
+
+def humanize(content: str) -> str:
+    """Second LLM pass: personality injection, anti-AI-detection.
+
+    Applies casual imperfections, sentence variation, tone randomization,
+    dedup check vs recent posts.
+    """
+    # Check dedup against recent posts
+    recent = _load_recent_posts(days=30)
+    for post in recent:
+        if post and content and _similarity(content, post) > 0.85:
+            log.warning("Content too similar to recent post, adding variation")
+            content = f"Real talk: {content}"
+
+    prompt = f"""Humanize this tweet. Apply ALL rules from your instructions.
+
+DRAFT:
+{content}
+
+Return ONLY the humanized version. No commentary."""
+
+    result = _call_llm(prompt, max_tokens=300, system=HUMANIZE_PROMPT)
+    if result:
+        result = _check_banned_words(result)
+        # Ensure char limit
+        if len(result) > 280:
+            result = result[:277] + "..."
+        return result
+
+    # Manual humanization fallback if LLM unavailable
+    return _manual_humanize(content)
+
+
+def _manual_humanize(text: str) -> str:
+    """Manual humanization when LLM is unavailable."""
+    text = _check_banned_words(text)
+
+    # Add a verbal tic to ~30% of tweets
+    if random.random() < 0.3 and not any(text.startswith(tic) for tic in VERBAL_TICS):
+        tic = random.choice(VERBAL_TICS)
+        text = f"{tic} {text[0].lower()}{text[1:]}" if text else text
+
+    # Swap "because" -> "bc" occasionally
+    if random.random() < 0.2:
+        text = text.replace("because", "bc")
+        text = text.replace("Because", "Bc")
+
+    if len(text) > 280:
+        text = text[:277] + "..."
+
+    return text
+
+
+def _similarity(a: str, b: str) -> float:
+    """Simple word-overlap similarity (0-1)."""
+    if not a or not b:
+        return 0.0
+    words_a = set(a.lower().split())
+    words_b = set(b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def generate_batch(count: int = 4) -> list[dict]:
+    """Generate a mixed batch of X content weighted by pillar.
+
+    Default: 4 items per cycle. Mix of single tweets and occasional thread.
+    Weighted by pillar distribution (40/25/25/10).
     """
     items = []
 
-    # 1-2 LinkedIn posts (highest priority for leads)
-    for _ in range(min(2, count)):
-        pillar = random.choice(["ai_tech", "demo_sales", "ai_tech"])
-        items.append(generate_linkedin_post(pillar=pillar))
+    for _ in range(count):
+        pillar = _pick_pillar()
 
-    # 1-2 X posts
-    remaining = count - len(items)
-    for _ in range(min(2, remaining)):
-        pillar = random.choice(["build_in_public", "ai_tech"])
-        items.append(generate_x_post(pillar=pillar))
+        # 20% chance of thread (roughly 1 per day with 4-5 posts/day)
+        if random.random() < 0.15 and not any(i["type"] == "thread" for i in items):
+            items.append(generate_thread(pillar=pillar))
+        else:
+            items.append(generate_tweet(pillar=pillar))
 
-    # 1 video script
-    remaining = count - len(items)
-    if remaining > 0:
-        platform = random.choice(["tiktok", "instagram", "youtube_shorts"])
-        pillar = random.choice(["demo_sales", "ai_tech"])
-        items.append(generate_short_video_script(platform=platform, pillar=pillar))
-
-    log.info("Generated batch: %d items (%s)",
-             len(items),
-             ", ".join(f"{i['platform']}/{i['type']}" for i in items))
+    log.info(
+        "Generated batch: %d items (%s)",
+        len(items),
+        ", ".join(f"{i['type']}/{i['pillar']}" for i in items),
+    )
     return items

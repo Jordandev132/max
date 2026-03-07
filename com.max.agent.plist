@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.max.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/abdallaalhamdan/polymarket-bot/.venv/bin/python</string>
+        <string>-m</string>
+        <string>max</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/abdallaalhamdan</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/max.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/max.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/abdallaalhamdan:/Users/abdallaalhamdan/shared</string>
+    </dict>
+</dict>
+</plist>

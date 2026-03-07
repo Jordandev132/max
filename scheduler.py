@@ -1,15 +1,16 @@
 """Max — Content Queue & Scheduler.
 
-Manages content queue, schedules posts for optimal times,
+X-ONLY: manages content queue, schedules posts for optimal times,
 tracks what's been posted and what's pending.
+Optimal times from spec: 8:30 AM, 10:30 AM, 1:00 PM, 4:00 PM, 7:30 PM ET.
 """
 from __future__ import annotations
 
 import json
 import logging
+import random
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from . import config
 
@@ -45,7 +46,7 @@ def add_to_queue(item: dict) -> dict:
 
     # Auto-schedule if not scheduled
     if "scheduled_for" not in item:
-        item["scheduled_for"] = _next_slot(item.get("platform", "x"))
+        item["scheduled_for"] = _next_slot()
 
     queue.append(item)
     _save_queue(queue)
@@ -61,41 +62,63 @@ def add_batch(items: list[dict]) -> int:
         item["queued_at"] = datetime.now(config.ET).isoformat()
         item["status"] = "queued"
         if "scheduled_for" not in item:
-            item["scheduled_for"] = _next_slot(item.get("platform", "x"))
+            item["scheduled_for"] = _next_slot()
         queue.append(item)
     _save_queue(queue)
     log.info("Added %d items to queue", len(items))
     return len(items)
 
 
-def get_pending(platform: str | None = None) -> list[dict]:
-    """Get pending (unposted) items, optionally filtered by platform."""
+def get_pending() -> list[dict]:
+    """Get pending (unposted) items."""
     queue = _load_queue()
-    pending = [q for q in queue if q.get("status") in ("queued", "draft")]
-    if platform:
-        pending = [q for q in pending if q.get("platform") == platform]
-    return pending
+    return [q for q in queue if q.get("status") in ("queued", "draft")]
 
 
-def mark_posted(item_id: str) -> bool:
+def get_due() -> list[dict]:
+    """Get items that are due for posting (scheduled time has passed)."""
+    now = datetime.now(config.ET)
+    queue = _load_queue()
+    due = []
+    for q in queue:
+        if q.get("status") != "queued":
+            continue
+        scheduled = q.get("scheduled_for")
+        if not scheduled:
+            continue
+        try:
+            sched_time = datetime.fromisoformat(scheduled)
+            if sched_time <= now:
+                due.append(q)
+        except (ValueError, TypeError):
+            pass
+    return due
+
+
+def mark_posted(item_id: str, post_result: dict | None = None) -> bool:
     """Mark a queue item as posted."""
     queue = _load_queue()
     for item in queue:
         if item.get("id") == item_id:
             item["status"] = "posted"
             item["posted_at"] = datetime.now(config.ET).isoformat()
+            if post_result:
+                item["post_result"] = {
+                    k: v for k, v in post_result.items()
+                    if k in ("tweet_id", "thread_id", "dry_run")
+                }
             _save_queue(queue)
             return True
     return False
 
 
 def get_stats() -> dict:
-    """Get queue statistics."""
+    """Get queue statistics — X only."""
     queue = _load_queue()
     now = datetime.now(config.ET)
     today = now.date().isoformat()
 
-    stats = {
+    return {
         "total": len(queue),
         "queued": sum(1 for q in queue if q.get("status") == "queued"),
         "draft": sum(1 for q in queue if q.get("status") == "draft"),
@@ -105,56 +128,75 @@ def get_stats() -> dict:
             if q.get("status") == "posted"
             and q.get("posted_at", "").startswith(today)
         ),
-        "by_platform": {},
+        "dry_run_posted": sum(
+            1 for q in queue
+            if q.get("status") == "posted"
+            and q.get("post_result", {}).get("dry_run")
+        ),
     }
 
-    for platform in config.PLATFORMS:
-        platform_items = [q for q in queue if q.get("platform") == platform]
-        stats["by_platform"][platform] = {
-            "queued": sum(1 for q in platform_items if q.get("status") == "queued"),
-            "posted": sum(1 for q in platform_items if q.get("status") == "posted"),
-        }
 
-    return stats
+# ── Optimal posting slots (ET) from spec ──
+_OPTIMAL_SLOTS = [
+    (8, 30),   # 8:30 AM
+    (10, 30),  # 10:30 AM
+    (13, 0),   # 1:00 PM
+    (16, 0),   # 4:00 PM
+    (19, 30),  # 7:30 PM
+]
 
 
-def _next_slot(platform: str) -> str:
-    """Calculate next optimal posting slot for a platform.
+def _next_slot() -> str:
+    """Calculate next optimal posting slot for X.
 
-    Optimal times (ET): 6-8 AM or 9-11 PM.
-    Spaces posts at least 2 hours apart on same platform.
+    Uses spec's optimal times with +/-15min jitter.
+    Ensures 2h minimum spacing between posts.
+    Weekend: lighter schedule.
     """
     now = datetime.now(config.ET)
     queue = _load_queue()
 
-    # Find latest scheduled time for this platform
-    platform_times = []
+    # Find all scheduled/posted times for today and tomorrow
+    existing_times = []
     for q in queue:
-        if q.get("platform") == platform and q.get("scheduled_for"):
+        sched = q.get("scheduled_for")
+        if sched:
             try:
-                t = datetime.fromisoformat(q["scheduled_for"])
-                platform_times.append(t)
+                t = datetime.fromisoformat(sched)
+                existing_times.append(t)
             except (ValueError, TypeError):
                 pass
 
-    # Start from next optimal slot
-    # Morning window: 6-8 AM, Evening window: 9-11 PM
-    candidate = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    # Weekend detection
+    is_weekend = now.weekday() >= 5
+    if is_weekend:
+        # Only use 2-3 slots on weekends
+        slots = _OPTIMAL_SLOTS[:2] if now.weekday() == 5 else _OPTIMAL_SLOTS[:1]
+    else:
+        slots = _OPTIMAL_SLOTS
 
-    for _ in range(48):  # Look up to 48 hours ahead
-        hour = candidate.hour
-        is_optimal = (6 <= hour <= 8) or (21 <= hour <= 23)
-        if is_optimal:
-            # Check no conflict with existing posts (2h gap)
+    # Try each slot today and tomorrow
+    for day_offset in range(3):  # Today, tomorrow, day after
+        day = now + timedelta(days=day_offset)
+        for hour, minute in slots:
+            # Apply jitter: +/- 15 min
+            jitter = random.randint(-config.TIMING_JITTER_M, config.TIMING_JITTER_M)
+            candidate = day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            candidate += timedelta(minutes=jitter)
+
+            # Must be in the future
+            if candidate <= now:
+                continue
+
+            # Check 2h spacing
             conflict = any(
-                abs((candidate - t).total_seconds()) < 7200
-                for t in platform_times
+                abs((candidate - t).total_seconds()) < config.MIN_POST_SPACING_S
+                for t in existing_times
             )
             if not conflict:
                 return candidate.isoformat()
-        candidate += timedelta(hours=1)
 
-    # Fallback: just schedule 4 hours from now
+    # Fallback: 4 hours from now
     return (now + timedelta(hours=4)).isoformat()
 
 
