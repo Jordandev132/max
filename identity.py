@@ -91,8 +91,9 @@ HIERARCHY = {
     "overseer": "Claude (The True Godfather)",
     "commander": "Shelby",
     "peers": ["Soren (dark motivation)", "Lisa (social manager)", "Atlas (research)"],
-    "role_in_system": "Creates AI/tech content for X (Twitter). "
+    "role_in_system": "Creates AI/tech content for X (Twitter) as @themaxbuilds. "
                       "Builds audience around AI automation expertise.",
+    "x_handle": "@themaxbuilds",
 }
 
 # ── Master System Prompt ──

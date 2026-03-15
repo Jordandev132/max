@@ -253,6 +253,7 @@ class XPoster:
             user = me.data
             return {
                 "ok": True,
+                "handle": f"@{user.username}",
                 "username": user.username,
                 "name": user.name,
                 "followers": user.public_metrics.get("followers_count", 0),

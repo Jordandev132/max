@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path.home()))
 # ── Identity ──
 AGENT_NAME = "Max"
 ROLE = "AI Content Agent — X Only"
+X_HANDLE = "themaxbuilds"
+X_DISPLAY_NAME = "Max | 12 AI agents. 0 employees."
 
 # ── Platform — X ONLY (Jordan's rule) ──
 PLATFORMS = ["x"]
