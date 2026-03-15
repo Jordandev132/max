@@ -201,6 +201,37 @@ HASHTAGS = {
 #  CONTENT IDEAS PER PILLAR
 # ═══════════════════════════════════════════
 
+# ═══════════════════════════════════════════
+#  ENGAGEMENT BAIT TEMPLATES
+# ═══════════════════════════════════════════
+
+ENGAGEMENT_BAIT = [
+    "Comment '{keyword}' and I'll send you {resource}. No catch.",
+    "I just finished a breakdown on {topic}. Drop a '1' if you want it.",
+    "Building something nobody asked for. The kind of project that either fails spectacularly or changes everything. Which do you think?",
+    "What's the one AI tool you'd keep if you could only pick one? I'll go first.",
+    "Hot take: {topic} is going to look completely different in 6 months. Here's why I think that.",
+]
+
+# ═══════════════════════════════════════════
+#  WEEKEND TOPICS (casual, lighter)
+# ═══════════════════════════════════════════
+
+WEEKEND_TOPICS = [
+    "Saturday morning, coffee, and zero Slack notifications. This is what building solo actually looks like.",
+    "Unpopular weekend take: the best code I've ever written was on a Sunday at 2 AM with zero pressure.",
+    "Non-AI observation: the best productivity tool is still a walk outside. Fight me.",
+    "Spent the morning NOT looking at code. Came back with a solution I'd been stuck on for 3 days. Brains are weird.",
+    "Honest question: do you actually take weekends off or is that a myth in tech?",
+    "Reading list for the weekend. No AI papers this time — just a good thriller and bad coffee.",
+    "The underrated skill nobody talks about: knowing when to stop working on something.",
+    "Sometimes the best thing you can do for your project is close the laptop and think.",
+]
+
+# ═══════════════════════════════════════════
+#  CONTENT IDEAS PER PILLAR
+# ═══════════════════════════════════════════
+
 CONTENT_IDEAS = {
     "ai_automation": [
         "AI tool that does X better than expected",

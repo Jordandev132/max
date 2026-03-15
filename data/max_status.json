@@ -1,0 +1,17 @@
+{
+  "agent": "max",
+  "status": "running",
+  "mode": "DRY_RUN",
+  "last_action": "Generated 8 items",
+  "last_update": "2026-03-15T16:30:09.574418-05:00",
+  "items_generated_total": 8,
+  "posts_today": 0,
+  "queue": {
+    "total": 8,
+    "queued": 8,
+    "draft": 0,
+    "posted": 0,
+    "posted_today": 0,
+    "dry_run_posted": 0
+  }
+}

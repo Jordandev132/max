@@ -1,0 +1,135 @@
+[
+  {
+    "id": "9bde5c089281",
+    "platform": "x",
+    "pillar": "hot_takes",
+    "type": "tweet",
+    "template": "weekend_casual",
+    "topic": "Unpopular weekend take: the best code I've ever written was on a Sunday at 2 AM with zero pressure.",
+    "content": "Not gonna lie, unpopular weekend take: the best code I've ever written was on a Sunday at 2 AM with zero pressure.",
+    "hashtags": [],
+    "generated_at": "2026-03-15T16:30:01.189677-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564350-05:00",
+    "scheduled_for": "2026-03-16T08:23:00-05:00"
+  },
+  {
+    "id": "9f1f63501226",
+    "platform": "x",
+    "pillar": "ai_automation",
+    "type": "tweet",
+    "template": "tutorial_teaser",
+    "topic": "Why most people use AI tools wrong",
+    "content": "Wild stat: Built something for Why most people use AI tools wrong that costs $0.10/day to run. Full breakdown coming this week.",
+    "hashtags": [
+      "#BuildWithAI",
+      "#Automation"
+    ],
+    "generated_at": "2026-03-15T16:30:02.415862-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564498-05:00",
+    "scheduled_for": "2026-03-16T08:45:00-05:00"
+  },
+  {
+    "id": "02d407a5d158",
+    "platform": "x",
+    "pillar": "ai_automation",
+    "type": "tweet",
+    "template": "just_discovered",
+    "topic": "Before/after: manual process vs AI-automated",
+    "content": "Look, just tested something for Before/after: manual process vs AI-automated. The results surprised me. This is way more practical than people think.",
+    "hashtags": [
+      "#AI",
+      "#AIAgents"
+    ],
+    "generated_at": "2026-03-15T16:30:02.923407-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564605-05:00",
+    "scheduled_for": "2026-03-16T08:36:00-05:00"
+  },
+  {
+    "id": "8e538f9f20a9",
+    "platform": "x",
+    "pillar": "ai_automation",
+    "type": "tweet",
+    "template": "just_discovered",
+    "topic": "How to build a custom AI workflow in under an hour",
+    "content": "Here's the thing, Just tested something for How to build a custom AI workflow in under an hour. The results surprised me. This is way more practical than people think.",
+    "hashtags": [
+      "#AI",
+      "#AIAgents"
+    ],
+    "generated_at": "2026-03-15T16:30:03.431161-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564705-05:00",
+    "scheduled_for": "2026-03-16T08:19:00-05:00"
+  },
+  {
+    "id": "ad7c22bd2542",
+    "platform": "x",
+    "pillar": "ai_automation",
+    "type": "tweet",
+    "template": "tutorial_teaser",
+    "topic": "Automation I built that saves Y hours/week",
+    "content": "Honestly? built something for Automation I built that saves Y hours/week that costs $0.10/day to run. Full breakdown coming this week.",
+    "hashtags": [
+      "#AITools",
+      "#AI"
+    ],
+    "generated_at": "2026-03-15T16:30:03.943465-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564800-05:00",
+    "scheduled_for": "2026-03-16T08:26:00-05:00"
+  },
+  {
+    "id": "81adcc341dfa",
+    "platform": "x",
+    "pillar": "hot_takes",
+    "type": "tweet",
+    "template": "stop_doing",
+    "topic": "The biggest waste of money in AI right now",
+    "content": "Not gonna lie, Stop doing The biggest waste of money in AI right now the hard way. I see this constantly. There's a better approach and it takes 10 minutes to set up.",
+    "hashtags": [
+      "#HotTake",
+      "#AI"
+    ],
+    "generated_at": "2026-03-15T16:30:04.477103-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564893-05:00",
+    "scheduled_for": "2026-03-16T08:16:00-05:00"
+  },
+  {
+    "id": "ffded1265294",
+    "platform": "x",
+    "pillar": "build_in_public",
+    "type": "tweet",
+    "template": "vulnerability",
+    "topic": "Scaling challenge I didn't expect",
+    "content": "Honest moment: I messed up Scaling challenge I didn't expect last week. Here's what went wrong and what I learned. Building in public means sharing this too.",
+    "hashtags": [
+      "#buildinpublic",
+      "#shipfast"
+    ],
+    "generated_at": "2026-03-15T16:30:05.024633-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.564970-05:00",
+    "scheduled_for": "2026-03-16T08:38:00-05:00"
+  },
+  {
+    "id": "55da74628b65",
+    "platform": "x",
+    "pillar": "ai_news",
+    "type": "tweet",
+    "template": "data_insight",
+    "topic": "AI startup funding round and market trends",
+    "content": "Look, 85% of teams I've seen get AI startup funding round and market trends wrong. The fix is simpler than you think.",
+    "hashtags": [
+      "#AIUpdate",
+      "#OpenAI"
+    ],
+    "generated_at": "2026-03-15T16:30:05.536504-05:00",
+    "status": "queued",
+    "queued_at": "2026-03-15T16:30:09.565037-05:00",
+    "scheduled_for": "2026-03-16T08:22:00-05:00"
+  }
+]

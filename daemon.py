@@ -187,7 +187,7 @@ def content_cycle(count: int = 4) -> dict:
 
     # 3. Generate regular batch (minus what we already generated)
     remaining = max(1, count - total_generated)
-    batch = generate_batch(count=remaining)
+    batch = generate_batch(count=remaining, is_weekend=_is_weekend())
 
     # 4. Humanize each item
     for item in batch:
@@ -224,8 +224,34 @@ def content_cycle(count: int = 4) -> dict:
     return result
 
 
+def _save_to_history(item: dict) -> None:
+    """Save posted item to post_history.json for dedup tracking."""
+    history = []
+    if config.HISTORY_FILE.exists():
+        try:
+            history = json.loads(config.HISTORY_FILE.read_text())
+        except Exception:
+            pass
+    history.append({
+        "content": item.get("content", ""),
+        "pillar": item.get("pillar", ""),
+        "type": item.get("type", ""),
+        "template": item.get("template", ""),
+        "posted_at": datetime.now(config.ET).isoformat(),
+    })
+    # Keep last 500
+    history = history[-500:]
+    config.HISTORY_FILE.write_text(json.dumps(history, indent=2))
+
+
 def _post_cycle(poster: XPoster) -> int:
-    """Check queue for due items and post (or dry-run log)."""
+    """Check queue for due items and post (or dry-run log).
+
+    Adds random 1-5 minute jitter before each post to avoid
+    perfectly consistent intervals (spec rule).
+    """
+    import random as _rnd
+
     due_items = get_due()
     if not due_items:
         return 0
@@ -240,6 +266,11 @@ def _post_cycle(poster: XPoster) -> int:
             log.info("Daily post limit reached (%d/%d)", already_posted + posted, max_today)
             break
 
+        # Random 1-5 min jitter before posting (spec: never post at consistent intervals)
+        jitter = _rnd.randint(config.POST_JITTER_MIN_S, config.POST_JITTER_MAX_S)
+        log.info("Post jitter: waiting %ds before posting %s", jitter, item.get("id", "?"))
+        time.sleep(jitter)
+
         if item["type"] == "thread":
             tweets = item.get("content", [])
             if isinstance(tweets, list):
@@ -248,10 +279,13 @@ def _post_cycle(poster: XPoster) -> int:
                 continue
         else:
             text = item.get("content", "")
-            result = poster.post_tweet(text, hashtags=item.get("hashtags"))
+            cta_link = item.get("cta_link")
+            result = poster.post_tweet(text, hashtags=item.get("hashtags"),
+                                       cta_link=cta_link)
 
         if result.get("ok"):
             mark_posted(item["id"], result)
+            _save_to_history(item)
             posted += 1
 
     if posted:

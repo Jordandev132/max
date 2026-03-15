@@ -70,6 +70,7 @@ MAX_REPLIES_PER_10MIN = 5
 REPLY_DELAY_MIN_S = 180                # 3 min minimum before replying
 REPLY_DELAY_MAX_S = 900                # 15 min maximum
 REPLY_CHECK_INTERVAL_S = 900           # 15 min poll interval
+REPLY_OWN_POSTS_PRIORITY = True        # Reply to own post comments first
 
 # ── DRY_RUN — default TRUE until Jordan creates X account ──
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
@@ -88,10 +89,16 @@ QUEUE_FILE = DATA_DIR / "content_queue.json"
 STATUS_FILE = DATA_DIR / "max_status.json"
 DRY_RUN_LOG = DATA_DIR / "dry_run_log.json"
 HISTORY_FILE = DATA_DIR / "post_history.json"
+OWN_POSTS_FILE = DATA_DIR / "own_posts.json"
 
 # ── Atlas Integration ──
+ATLAS_ENABLED = True
 ATLAS_KB_DIR = Path.home() / "atlas" / "data" / "knowledge_base"
 ATLAS_TRENDS_FILE = Path.home() / "atlas" / "data" / "background_status.json"
+
+# ── Posting Jitter ──
+POST_JITTER_MIN_S = 60                 # 1 min minimum jitter before posting
+POST_JITTER_MAX_S = 300                # 5 min maximum jitter
 
 # ── Claude Overseer ──
 OVERSEER_DATA = Path.home() / "claude_overseer" / "data"

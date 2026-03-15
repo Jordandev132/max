@@ -71,11 +71,24 @@ class XPoster:
         return self._client
 
     def _log_dry_run(self, action: str, data: dict) -> dict:
-        """Log would-post content to dry_run_log.json."""
+        """Log would-post content to dry_run_log.json with quality info."""
+        from .identity import BANNED_WORDS
+
+        text = data.get("text", "")
+        # Check for banned words in content
+        banned_found = [w for w in BANNED_WORDS if w.lower() in text.lower()]
+
         entry = {
-            "action": action,
             "timestamp": datetime.now(config.ET).isoformat(),
-            **data,
+            "type": "thread" if action == "post_thread" else "tweet",
+            "pillar": data.get("pillar", ""),
+            "template": data.get("template", ""),
+            "content": text if isinstance(text, str) else data.get("tweets", text),
+            "hashtags": data.get("hashtags", []),
+            "scheduled_for": data.get("scheduled_for", ""),
+            "char_count": len(text) if isinstance(text, str) else sum(len(t) for t in (text if isinstance(text, list) else [])),
+            "banned_words_found": banned_found,
+            "humanized": True,
         }
 
         # Append to dry run log
@@ -88,11 +101,33 @@ class XPoster:
         log_data.append(entry)
         config.DRY_RUN_LOG.write_text(json.dumps(log_data, indent=2))
 
-        log.info("[DRY_RUN] Would %s: %s", action, data.get("text", "")[:80])
+        log.info("[DRY_RUN] Would %s: %s", action, (text if isinstance(text, str) else str(text))[:80])
         return {"ok": True, "dry_run": True, **entry}
 
-    def post_tweet(self, text: str, hashtags: list[str] | None = None) -> dict:
-        """Post a single tweet. DRY_RUN safe."""
+    def _track_own_post(self, tweet_id: str, content: str) -> None:
+        """Track own posts for reply-to-own priority."""
+        posts = []
+        if config.OWN_POSTS_FILE.exists():
+            try:
+                posts = json.loads(config.OWN_POSTS_FILE.read_text())
+            except Exception:
+                pass
+        posts.append({
+            "tweet_id": tweet_id,
+            "content": content[:100],
+            "posted_at": datetime.now(config.ET).isoformat(),
+        })
+        # Keep last 100
+        posts = posts[-100:]
+        config.OWN_POSTS_FILE.write_text(json.dumps(posts, indent=2))
+
+    def post_tweet(self, text: str, hashtags: list[str] | None = None,
+                   cta_link: str | None = None) -> dict:
+        """Post a single tweet. DRY_RUN safe.
+
+        If cta_link is provided, posts main tweet WITHOUT the link,
+        then auto-replies with the link (30-50% reach penalty avoidance).
+        """
         # Append hashtags if provided
         if hashtags:
             tag_str = " ".join(hashtags[:2])  # Max 2 per spec
@@ -100,7 +135,10 @@ class XPoster:
                 text = f"{text}\n{tag_str}"
 
         if self.dry_run:
-            return self._log_dry_run("post_tweet", {"text": text})
+            data = {"text": text}
+            if cta_link:
+                data["cta_link_reply"] = cta_link
+            return self._log_dry_run("post_tweet", data)
 
         client = self._get_client()
         if not client:
@@ -110,6 +148,13 @@ class XPoster:
             response = client.create_tweet(text=text)
             tweet_id = response.data["id"]
             log.info("Posted tweet %s: %s", tweet_id, text[:60])
+            self._track_own_post(tweet_id, text)
+
+            # Auto-reply with CTA link if provided
+            if cta_link:
+                self.reply_to(tweet_id, cta_link)
+                log.info("Auto-replied CTA link to %s", tweet_id)
+
             return {
                 "ok": True,
                 "tweet_id": tweet_id,
@@ -151,6 +196,8 @@ class XPoster:
                 results.append({"ok": True, "tweet_id": tweet_id, "text": text})
                 prev_id = tweet_id
                 log.info("Thread %d/%d posted: %s", i + 1, len(tweets), tweet_id)
+                if i == 0:
+                    self._track_own_post(tweet_id, text)
 
                 # Spec requirement: 2-sec delay between thread tweets
                 if i < len(tweets) - 1:

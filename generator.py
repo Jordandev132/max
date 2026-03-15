@@ -17,6 +17,7 @@ from . import config
 from .identity import SYSTEM_PROMPT, HUMANIZE_PROMPT, BANNED_WORDS, VERBAL_TICS
 from .content_bank import (
     TWEET_TEMPLATES, THREAD_HOOKS, HASHTAGS, CONTENT_IDEAS,
+    ENGAGEMENT_BAIT, WEEKEND_TOPICS,
 )
 
 log = logging.getLogger("max.generator")
@@ -57,6 +58,9 @@ def _pick_hashtags(pillar: str, count: int = 2) -> list[str]:
 
 def _get_atlas_context() -> str:
     """Pull latest AI/tech trends from Atlas knowledge base."""
+    if not config.ATLAS_ENABLED:
+        return ""
+
     context_parts = []
 
     if config.ATLAS_TRENDS_FILE.exists():
@@ -67,8 +71,11 @@ def _get_atlas_context() -> str:
                 context_parts.append("Recent Atlas findings:")
                 for f in findings[:5]:
                     context_parts.append(f"- {f}")
-        except Exception:
-            pass
+                log.info("Atlas trends used: %s", findings[:3])
+        except Exception as e:
+            log.warning("Atlas trends file unreadable: %s", e)
+    else:
+        log.debug("Atlas trends file not found: %s", config.ATLAS_TRENDS_FILE)
 
     if config.ATLAS_KB_DIR.exists():
         try:
@@ -80,8 +87,11 @@ def _get_atlas_context() -> str:
                         "ai", "automation", "chatbot", "llm", "agent", "gpt", "claude",
                     ]):
                         context_parts.append(f"Atlas KB: {summary[:200]}")
-        except Exception:
-            pass
+                        log.info("Atlas KB used: %s — %s", f.name, summary[:80])
+        except Exception as e:
+            log.warning("Atlas KB read error: %s", e)
+    else:
+        log.debug("Atlas KB dir not found: %s", config.ATLAS_KB_DIR)
 
     return "\n".join(context_parts) if context_parts else ""
 
@@ -107,9 +117,13 @@ def _check_banned_words(text: str) -> str:
     return result.strip()
 
 
+_recent_templates: list[str] = []  # track recent template IDs to avoid repeats
+
+
 def _load_recent_posts(days: int = 30) -> list[str]:
-    """Load recent post content for dedup checking."""
+    """Load recent post content for dedup checking (history + current queue)."""
     posts = []
+    # From post history
     if config.HISTORY_FILE.exists():
         try:
             data = json.loads(config.HISTORY_FILE.read_text())
@@ -117,7 +131,87 @@ def _load_recent_posts(days: int = 30) -> list[str]:
                 posts.append(item.get("content", ""))
         except Exception:
             pass
+    # From current queue too
+    if config.QUEUE_FILE.exists():
+        try:
+            queue = json.loads(config.QUEUE_FILE.read_text())
+            for item in queue:
+                c = item.get("content", "")
+                if isinstance(c, str):
+                    posts.append(c)
+                elif isinstance(c, list):
+                    posts.extend(c)
+        except Exception:
+            pass
     return posts
+
+
+def _is_duplicate(content: str, recent: list[str] | None = None) -> bool:
+    """Check if content is too similar to recent posts/queue. Threshold 0.65."""
+    if recent is None:
+        recent = _load_recent_posts()
+    for post in recent:
+        if post and content and _similarity(content, post) > 0.65:
+            return True
+    return False
+
+
+def _template_fallback(template: dict, topic: str, pillar: str) -> str:
+    """Generate content from template when LLM is unavailable.
+
+    Customizes with the topic, applies humanization, avoids repeats.
+    """
+    global _recent_templates
+
+    # Build content from template structure + topic
+    name = template.get("name", "")
+    example = template.get("example", "")
+
+    # Customize the example by injecting the topic
+    tic = random.choice(VERBAL_TICS) if random.random() < 0.4 else ""
+    prefix = f"{tic} " if tic else ""
+
+    # Topic-aware generation based on template type
+    tid = template.get("name", "").lower().replace(" ", "_")
+    ideas = CONTENT_IDEAS.get(pillar, CONTENT_IDEAS["ai_automation"])
+    alt_topic = random.choice(ideas) if ideas else topic
+
+    # Use the topic to make it unique instead of returning static example
+    if "discovered" in name.lower():
+        content = f"{prefix}Just tested something for {topic}. The results surprised me. This is way more practical than people think."
+    elif "contrarian" in name.lower():
+        content = f"{prefix}Unpopular opinion: most people are wrong about {topic}. I've seen the data. Here's what actually works."
+    elif "build" in name.lower() and "update" in name.lower():
+        week = random.randint(4, 16)
+        content = f"{prefix}Week {week} update: been working on {topic}. Shipped it. Already seeing results."
+    elif "data" in name.lower():
+        pct = random.randint(60, 95)
+        content = f"{prefix}{pct}% of teams I've seen get {topic} wrong. The fix is simpler than you think."
+    elif "before" in name.lower() and "after" in name.lower():
+        content = f"Before: spending hours on {topic} manually.\nAfter: automated the whole thing.\nResult: got my time back."
+    elif "stop" in name.lower():
+        content = f"{prefix}Stop doing {topic} the hard way. I see this constantly. There's a better approach and it takes 10 minutes to set up."
+    elif "comparison" in name.lower() or "tool" in name.lower():
+        content = f"{prefix}Tested two different approaches to {topic}. One was 3x faster. The winner wasn't what I expected."
+    elif "question" in name.lower() or "poll" in name.lower():
+        content = f"Real question for anyone working on {topic}: what's been your biggest bottleneck? I'm leaning one direction but curious what you've seen."
+    elif "tutorial" in name.lower():
+        content = f"{prefix}Built something for {topic} that costs $0.10/day to run. Full breakdown coming this week."
+    elif "vulnerability" in name.lower():
+        content = f"{prefix}Honest moment: I messed up {topic} last week. Here's what went wrong and what I learned. Building in public means sharing this too."
+    elif "resource" in name.lower():
+        content = f"3 tools I use daily for {topic} that most people don't know about. Thread with details below."
+    else:
+        content = f"{prefix}{topic}. Most people are sleeping on this. And it's costing them."
+
+    content = _manual_humanize(content)
+
+    # Track to avoid consecutive same template
+    _recent_templates.append(tid)
+    if len(_recent_templates) > 5:
+        _recent_templates.pop(0)
+
+    return content
 
 
 # ═══════════════════════════════════════════
@@ -158,8 +252,8 @@ def generate_tweet(
 
     content = _call_llm(prompt, max_tokens=300)
     if not content:
-        # Template fallback
-        content = template["example"]
+        # Template fallback — customize with topic, not raw example
+        content = _template_fallback(template, topic, pillar)
 
     content = _check_banned_words(content)
     # Trim to 280 chars
@@ -324,12 +418,14 @@ def humanize(content: str) -> str:
     Applies casual imperfections, sentence variation, tone randomization,
     dedup check vs recent posts.
     """
-    # Check dedup against recent posts
+    # Check dedup against recent posts + queue
     recent = _load_recent_posts(days=30)
     for post in recent:
-        if post and content and _similarity(content, post) > 0.85:
+        if post and content and _similarity(content, post) > 0.65:
             log.warning("Content too similar to recent post, adding variation")
-            content = f"Real talk: {content}"
+            tic = random.choice(VERBAL_TICS)
+            content = f"{tic} {content}"
+            break
 
     prompt = f"""Humanize this tweet. Apply ALL rules from your instructions.
 
@@ -383,26 +479,96 @@ def _similarity(a: str, b: str) -> float:
     return len(intersection) / len(union)
 
 
-def generate_batch(count: int = 4) -> list[dict]:
+def generate_engagement_bait(topic: str | None = None) -> dict:
+    """Generate an engagement bait tweet (comment X for Y, curiosity gap)."""
+    from datetime import datetime
+    templates = ENGAGEMENT_BAIT
+    template = random.choice(templates)
+
+    if not topic:
+        ideas = CONTENT_IDEAS.get("ai_automation", [])
+        topic = random.choice(ideas)
+
+    content = template.format(topic=topic, keyword="AI", resource="my automation checklist")
+    content = _manual_humanize(content)
+    if len(content) > 280:
+        content = content[:277] + "..."
+
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "platform": "x",
+        "pillar": "build_in_public",
+        "type": "tweet",
+        "template": "engagement_bait",
+        "topic": topic,
+        "content": content,
+        "hashtags": _pick_hashtags("build_in_public", 1),
+        "generated_at": datetime.now(config.ET).isoformat(),
+        "status": "draft",
+    }
+
+
+def generate_weekend_tweet() -> dict:
+    """Generate a lighter, more casual weekend tweet."""
+    from datetime import datetime
+    topic = random.choice(WEEKEND_TOPICS)
+    tic = random.choice(VERBAL_TICS) if random.random() < 0.3 else ""
+    prefix = f"{tic} " if tic else ""
+    content = f"{prefix}{topic}"
+    content = _manual_humanize(content)
+    if len(content) > 280:
+        content = content[:277] + "..."
+
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "platform": "x",
+        "pillar": "hot_takes",
+        "type": "tweet",
+        "template": "weekend_casual",
+        "topic": topic,
+        "content": content,
+        "hashtags": [],
+        "generated_at": datetime.now(config.ET).isoformat(),
+        "status": "draft",
+    }
+
+
+def generate_batch(count: int = 4, is_weekend: bool = False) -> list[dict]:
     """Generate a mixed batch of X content weighted by pillar.
 
     Default: 4 items per cycle. Mix of single tweets and occasional thread.
     Weighted by pillar distribution (40/25/25/10).
+    On weekends: mix in 1 casual post per batch.
     """
     items = []
+    recent = _load_recent_posts()
 
-    for _ in range(count):
+    for i in range(count):
         pillar = _pick_pillar()
 
-        # 20% chance of thread (roughly 1 per day with 4-5 posts/day)
-        if random.random() < 0.15 and not any(i["type"] == "thread" for i in items):
-            items.append(generate_thread(pillar=pillar))
+        # Weekend: first item is casual
+        if is_weekend and i == 0:
+            item = generate_weekend_tweet()
+        # 15% chance of thread (roughly 1 per day with 4-5 posts/day)
+        elif random.random() < 0.15 and not any(i["type"] == "thread" for i in items):
+            item = generate_thread(pillar=pillar)
+        # 10% chance of engagement bait
+        elif random.random() < 0.10:
+            item = generate_engagement_bait()
         else:
-            items.append(generate_tweet(pillar=pillar))
+            item = generate_tweet(pillar=pillar)
+
+        # Dedup check before adding
+        content = item.get("content", "")
+        if isinstance(content, str) and _is_duplicate(content, recent):
+            log.info("Skipping duplicate content, regenerating")
+            item = generate_tweet(pillar=pillar)  # try once more
+
+        items.append(item)
 
     log.info(
         "Generated batch: %d items (%s)",
         len(items),
-        ", ".join(f"{i['type']}/{i['pillar']}" for i in items),
+        ", ".join(f"{it['type']}/{it['pillar']}" for it in items),
     )
     return items
