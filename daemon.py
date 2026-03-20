@@ -59,8 +59,8 @@ def _publish_event(event_type: str, data: dict, summary: str = ""):
     try:
         from events import publish as bus_publish
         bus_publish(agent="max", event_type=event_type, data=data, summary=summary)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("[MAX] Event publish failed: %s", str(e)[:100])
 
 
 def _heartbeat():
@@ -102,8 +102,8 @@ def _check_overseer_directives() -> list[dict]:
         for d in data.get("content_directives", []):
             if d.get("agent") == "max" and d.get("status") != "done":
                 directives.append(d)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("[MAX] Failed to read overseer directives: %s", str(e)[:100])
     return directives
 
 
@@ -122,8 +122,8 @@ def _check_atlas_trends() -> list[str]:
                 "agent", "startup", "saas", "bot", "openai", "anthropic",
             ]):
                 topics.append(f)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("[MAX] Failed to read Atlas trends: %s", str(e)[:100])
     return topics[:3]
 
 
@@ -230,8 +230,8 @@ def _save_to_history(item: dict) -> None:
     if config.HISTORY_FILE.exists():
         try:
             history = json.loads(config.HISTORY_FILE.read_text())
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("[MAX] Failed to read post history: %s", str(e)[:100])
     history.append({
         "content": item.get("content", ""),
         "pillar": item.get("pillar", ""),
